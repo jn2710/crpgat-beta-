@@ -1,0 +1,205 @@
+const express = require("express");
+const WebSocket = require("ws");
+
+const app = express();
+const PORT = 3000;
+
+app.get("/", (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Crappy Gats</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #111; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const socket = new WebSocket("ws://" + location.host);
+
+let players = {};
+let bullets = [];
+let myId = null;
+
+let keys = {};
+let mouse = { x: 0, y: 0 };
+
+document.addEventListener("keydown", e => keys[e.key] = true);
+document.addEventListener("keyup", e => keys[e.key] = false);
+
+canvas.addEventListener("mousemove", e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+
+canvas.addEventListener("mousedown", () => {
+  socket.send(JSON.stringify({
+    type: "shoot",
+    x: mouse.x,
+    y: mouse.y
+  }));
+});
+
+function sendInput() {
+  let dx = 0, dy = 0;
+
+  if (keys["w"]) dy -= 3;
+  if (keys["s"]) dy += 3;
+  if (keys["a"]) dx -= 3;
+  if (keys["d"]) dx += 3;
+
+  socket.send(JSON.stringify({
+    type: "move",
+    dx,
+    dy
+  }));
+}
+
+socket.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  if (data.type === "init") {
+    myId = data.id;
+  }
+
+  if (data.type === "state") {
+    players = data.players;
+    bullets = data.bullets;
+  }
+};
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // players
+  for (let id in players) {
+    const p = players[id];
+
+    ctx.fillStyle = id === myId ? "cyan" : "lime";
+    ctx.fillRect(p.x, p.y, 20, 20);
+
+    // Health bar
+    ctx.fillStyle = "red";
+    ctx.fillRect(p.x, p.y - 10, 20, 5);
+    ctx.fillStyle = "green";
+    ctx.fillRect(p.x, p.y - 10, 20 * (p.hp / 100), 5);
+  }
+
+  // draw bullets
+  ctx.fillStyle = "yellow";
+  bullets.forEach(b => {
+    ctx.fillRect(b.x, b.y, 5, 5);
+  });
+}
+
+function loop() {
+  sendInput();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
+  `);
+});
+
+const server = app.listen(PORT, () => {
+  console.log("Running on http://localhost:" + PORT);
+});
+
+const wss = new WebSocket.Server({ server });
+
+let players = {};
+let bullets = [];
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+wss.on("connection", (ws) => {
+  const id = Math.random().toString(36).substr(2, 9);
+
+  players[id] = {
+    x: Math.random() * 500,
+    y: Math.random() * 500,
+    hp: 100
+  };
+
+  ws.send(JSON.stringify({ type: "init", id }));
+
+  ws.on("message", (msg) => {
+    const data = JSON.parse(msg);
+
+    if (data.type === "move") {
+      players[id].x += data.dx;
+      players[id].y += data.dy;
+    }
+
+    if (data.type === "shoot") {
+      const p = players[id];
+      const angle = Math.atan2(data.y - p.y, data.x - p.x);
+
+      bullets.push({
+        x: p.x + 10,
+        y: p.y + 10,
+        vx: Math.cos(angle) * 6,
+        vy: Math.sin(angle) * 6,
+        owner: id
+      });
+    }
+  });
+
+  ws.on("close", () => {
+    delete players[id];
+  });
+});
+
+// Game loop (servers)
+setInterval(() => {
+  // Move bullets
+  bullets.forEach(b => {
+    b.x += b.vx;
+    b.y += b.vy;
+  });
+
+  // Collision
+  bullets.forEach((b, i) => {
+    for (let id in players) {
+      if (id === b.owner) continue;
+
+      if (distance(b, players[id]) < 15) {
+        players[id].hp -= 20;
+        bullets.splice(i, 1);
+
+        // Respawn
+        if (players[id].hp <= 0) {
+          players[id].x = Math.random() * 500;
+          players[id].y = Math.random() * 500;
+          players[id].hp = 100;
+        }
+        break;
+      }
+    }
+  });
+
+  // "broadcasting" 
+  wss.clients.forEach(client => {
+    client.send(JSON.stringify({
+      type: "state",
+      players,
+      bullets
+    }));
+  });
+
+}, 50);
