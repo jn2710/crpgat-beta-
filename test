@@ -33,6 +33,8 @@ let myId = null;
 let keys = {};
 let mouse = { x: 0, y: 0 };
 
+//nospamautoclick cause jackson is a whore 
+let lastShot = 0;
 document.addEventListener("keydown", e => keys[e.key] = true);
 document.addEventListener("keyup", e => keys[e.key] = false);
 
@@ -42,6 +44,11 @@ canvas.addEventListener("mousemove", e => {
 });
 
 canvas.addEventListener("mousedown", () => {
+  const now = Date.now();
+  if (now - lastShot < 150) return;
+
+  lastShot = now;
+
   socket.send(JSON.stringify({
     type: "shoot",
     x: mouse.x,
@@ -52,16 +59,20 @@ canvas.addEventListener("mousedown", () => {
 function sendInput() {
   let dx = 0, dy = 0;
 
-  if (keys["w"]) dy -= 3;
-  if (keys["s"]) dy += 3;
-  if (keys["a"]) dx -= 3;
-  if (keys["d"]) dx += 3;
+  const speed = 3;
 
-  socket.send(JSON.stringify({
-    type: "move",
-    dx,
-    dy
-  }));
+  if (keys["w"]) dy -= speed;
+  if (keys["s"]) dy += speed;
+  if (keys["a"]) dx -= speed;
+  if (keys["d"]) dx += speed;
+
+  if (dx !== 0 || dy !== 0) {
+    socket.send(JSON.stringify({
+      type: "move",
+      dx,
+      dy
+    }));
+  }
 }
 
 socket.onmessage = (event) => {
@@ -83,9 +94,9 @@ function draw() {
   // players
   for (let id in players) {
     const p = players[id];
-
-    ctx.fillStyle = id === myId ? "cyan" : "lime";
-    ctx.fillRect(p.x, p.y, 20, 20);
+ctx.fillStyle = "white";
+ctx.font = "10px Arial";
+ctx.fillText(id.substring(0, 4), p.x, p.y - 15);
 
     // Health bar
     ctx.fillStyle = "red";
@@ -138,27 +149,38 @@ wss.on("connection", (ws) => {
 
   ws.send(JSON.stringify({ type: "init", id }));
 
-  ws.on("message", (msg) => {
-    const data = JSON.parse(msg);
+ ws.on("message", (msg) => {
+  let data;
 
-    if (data.type === "move") {
-      players[id].x += data.dx;
-      players[id].y += data.dy;
-    }
+  try {
+    data = JSON.parse(msg);
+  } catch {
+    return; // ignore bad packets
+  }
 
-    if (data.type === "shoot") {
-      const p = players[id];
-      const angle = Math.atan2(data.y - p.y, data.x - p.x);
+  if (!players[id]) return;
 
-      bullets.push({
-        x: p.x + 10,
-        y: p.y + 10,
-        vx: Math.cos(angle) * 6,
-        vy: Math.sin(angle) * 6,
-        owner: id
-      });
-    }
-  });
+  if (data.type === "move") {
+    players[id].x += data.dx || 0;
+    players[id].y += data.dy || 0;
+  }
+// fix for infinite map (testing only will need work in future)
+players[id].x = Math.max(0, Math.min(980, players[id].x));
+players[id].y = Math.max(0, Math.min(680, players[id].y));
+
+  if (data.type === "shoot") {
+    const p = players[id];
+    const angle = Math.atan2(data.y - p.y, data.x - p.x);
+
+    bullets.push({
+      x: p.x + 10,
+      y: p.y + 10,
+      vx: Math.cos(angle) * 6,
+      vy: Math.sin(angle) * 6,
+      owner: id
+    });
+  }
+});
 
   ws.on("close", () => {
     delete players[id];
@@ -172,26 +194,37 @@ setInterval(() => {
     b.x += b.vx;
     b.y += b.vy;
   });
+wss.clients.forEach(client => {
+  if (client.readyState === WebSocket.OPEN) {
+    client.send(JSON.stringify({
+      type: "state",
+      players,
+      bullets
+    }));
+  }
+});
 
-  // Collision
-  bullets.forEach((b, i) => {
-    for (let id in players) {
-      if (id === b.owner) continue;
+// Collision (bullet fix)
+for (let i = bullets.length - 1; i >= 0; i--) {
+  const b = bullets[i];
 
-      if (distance(b, players[id]) < 15) {
-        players[id].hp -= 20;
-        bullets.splice(i, 1);
+  for (let id in players) {
+    if (id === b.owner) continue;
 
-        // Respawn
-        if (players[id].hp <= 0) {
-          players[id].x = Math.random() * 500;
-          players[id].y = Math.random() * 500;
-          players[id].hp = 100;
-        }
-        break;
+    if (distance(b, players[id]) < 15) {
+      players[id].hp -= 20;
+      bullets.splice(i, 1);
+
+      // Respawn
+      if (players[id].hp <= 0) {
+        players[id].x = Math.random() * 500;
+        players[id].y = Math.random() * 500;
+        players[id].hp = 100;
       }
+      break;
     }
-  });
+  }
+}
 
   // "broadcasting" 
   wss.clients.forEach(client => {
