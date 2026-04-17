@@ -28,13 +28,14 @@ const socket = new WebSocket("ws://" + location.host);
 
 let players = {};
 let bullets = [];
+let walls = [];
 let myId = null;
 
 let keys = {};
 let mouse = { x: 0, y: 0 };
 
-//nospamautoclick cause jackson is a whore 
 let lastShot = 0;
+
 document.addEventListener("keydown", e => keys[e.key] = true);
 document.addEventListener("keyup", e => keys[e.key] = false);
 
@@ -58,7 +59,6 @@ canvas.addEventListener("mousedown", () => {
 
 function sendInput() {
   let dx = 0, dy = 0;
-
   const speed = 3;
 
   if (keys["w"]) dy -= speed;
@@ -85,27 +85,40 @@ socket.onmessage = (event) => {
   if (data.type === "state") {
     players = data.players;
     bullets = data.bullets;
+    walls = data.walls || [];
   }
 };
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // walls
+  ctx.fillStyle = "#555";
+  walls.forEach(w => {
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+  });
+
   // players
   for (let id in players) {
     const p = players[id];
-ctx.fillStyle = "white";
-ctx.font = "10px Arial";
-ctx.fillText(id.substring(0, 4), p.x, p.y - 15);
 
-    // Health bar
+    ctx.fillStyle = id === myId ? "#4caf50" : "#2196f3";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "white";
+    ctx.font = "10px Arial";
+    ctx.fillText(id.substring(0, 4), p.x - 10, p.y - 18);
+
     ctx.fillStyle = "red";
-    ctx.fillRect(p.x, p.y - 10, 20, 5);
-    ctx.fillStyle = "green";
-    ctx.fillRect(p.x, p.y - 10, 20 * (p.hp / 100), 5);
+    ctx.fillRect(p.x - 10, p.y - 14, 20, 4);
+
+    ctx.fillStyle = "lime";
+    ctx.fillRect(p.x - 10, p.y - 14, 20 * (p.hp / 100), 4);
   }
 
-  // draw bullets
+  // bullets
   ctx.fillStyle = "yellow";
   bullets.forEach(b => {
     ctx.fillRect(b.x, b.y, 5, 5);
@@ -134,6 +147,11 @@ const wss = new WebSocket.Server({ server });
 let players = {};
 let bullets = [];
 
+const walls = [
+  { x: 200, y: 150, w: 200, h: 20 },
+  { x: 400, y: 300, w: 20, h: 200 }
+];
+
 function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
@@ -149,90 +167,90 @@ wss.on("connection", (ws) => {
 
   ws.send(JSON.stringify({ type: "init", id }));
 
- ws.on("message", (msg) => {
-  let data;
+  ws.on("message", (msg) => {
+    let data;
 
-  try {
-    data = JSON.parse(msg);
-  } catch {
-    return; // ignore bad packets
-  }
+    try {
+      data = JSON.parse(msg);
+    } catch {
+      return;
+    }
 
-  if (!players[id]) return;
+    if (!players[id]) return;
 
-  if (data.type === "move") {
-    players[id].x += data.dx || 0;
-    players[id].y += data.dy || 0;
-  }
-// fix for infinite map (testing only will need work in future)
-players[id].x = Math.max(0, Math.min(980, players[id].x));
-players[id].y = Math.max(0, Math.min(680, players[id].y));
+    if (data.type === "move") {
+      players[id].x += data.dx || 0;
+      players[id].y += data.dy || 0;
+    }
 
-  if (data.type === "shoot") {
-    const p = players[id];
-    const angle = Math.atan2(data.y - p.y, data.x - p.x);
+    players[id].x = Math.max(0, Math.min(980, players[id].x));
+    players[id].y = Math.max(0, Math.min(680, players[id].y));
 
-    bullets.push({
-      x: p.x + 10,
-      y: p.y + 10,
-      vx: Math.cos(angle) * 6,
-      vy: Math.sin(angle) * 6,
-      owner: id
-    });
-  }
-});
+    if (data.type === "shoot") {
+      const p = players[id];
+      const angle = Math.atan2(data.y - p.y, data.x - p.x);
+
+      bullets.push({
+        x: p.x,
+        y: p.y,
+        vx: Math.cos(angle) * 6,
+        vy: Math.sin(angle) * 6,
+        owner: id
+      });
+    }
+  });
 
   ws.on("close", () => {
     delete players[id];
   });
 });
 
-// Game loop (servers)
 setInterval(() => {
-  // Move bullets
+  // move bullets
   bullets.forEach(b => {
     b.x += b.vx;
     b.y += b.vy;
   });
-wss.clients.forEach(client => {
-  if (client.readyState === WebSocket.OPEN) {
-    client.send(JSON.stringify({
-      type: "state",
-      players,
-      bullets
-    }));
-  }
-});
 
-// Collision (bullet fix)
-for (let i = bullets.length - 1; i >= 0; i--) {
-  const b = bullets[i];
+  // remove offscreen bullets
+  bullets = bullets.filter(b =>
+    b.x > 0 && b.x < 1000 &&
+    b.y > 0 && b.y < 700
+  );
 
-  for (let id in players) {
-    if (id === b.owner) continue;
+  // collisions
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
 
-    if (distance(b, players[id]) < 15) {
-      players[id].hp -= 20;
-      bullets.splice(i, 1);
+    for (let id in players) {
+      if (id === b.owner) continue;
 
-      // Respawn
-      if (players[id].hp <= 0) {
-        players[id].x = Math.random() * 500;
-        players[id].y = Math.random() * 500;
-        players[id].hp = 100;
+      if (distance(b, players[id]) < 15) {
+        players[id].hp -= 20;
+        bullets.splice(i, 1);
+
+        if (players[id].hp <= 0) {
+          players[id] = {
+            x: Math.random() * 500,
+            y: Math.random() * 500,
+            hp: 100
+          };
+        }
+        break;
       }
-      break;
     }
   }
-}
 
-  // "broadcasting" 
+  // SINGLE broadcast (fixed)
   wss.clients.forEach(client => {
-    client.send(JSON.stringify({
-      type: "state",
-      players,
-      bullets
-    }));
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: "state",
+        players,
+        bullets,
+        walls
+      }));
+    }
   });
 
 }, 50);
