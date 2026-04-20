@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Zombie Survival</title>
+  <title>CRPGAT Survival</title>
   <style>
     body { margin: 0; overflow: hidden; background: #111; }
     canvas { display: block; }
@@ -66,7 +66,7 @@ let weapon = {
 let reloading = false;
 
 // =====================
-// INPUT
+// INPUT key
 // =====================
 document.addEventListener("keydown", e => {
   keys[e.key] = true;
@@ -85,14 +85,14 @@ canvas.addEventListener("mousemove", e => {
 canvas.addEventListener("mousedown", shoot);
 
 // =====================
-// UTILS
+// stuff
 // =====================
 function dist(a,b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 // =====================
-// ROUND SYSTEM
+// ROUNds based
 // =====================
 function startRound() {
   game.state = "playing";
