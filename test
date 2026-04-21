@@ -44,7 +44,7 @@ const game = {
   state:"playing"
 };
 
-let zombies=[], bullets=[], grenades=[], texts=[], particles=[], drops=[];
+let zombies=[], bullets=[], grenades=[], particles=[], drops=[];
 
 let keys={}, mouse={x:0,y:0};
 
@@ -162,25 +162,21 @@ function update(){
 
   game.time++;
 
-  // movement + dash
   let sp=player.speed;
-  if(keys["shift"] && player.dash<=0){
-    player.dash=20;
-  }
-  if(player.dash>0){
-    sp*=3;
-    player.dash--;
-  }
+  if(keys["shift"] && player.dash<=0) player.dash=20;
+  if(player.dash>0){ sp*=3; player.dash--; }
 
   if(keys["w"]) player.y-=sp;
   if(keys["s"]) player.y+=sp;
   if(keys["a"]) player.x-=sp;
   if(keys["d"]) player.x+=sp;
 
-  // regen
+  // keep player in bounds
+  player.x=Math.max(0,Math.min(canvas.width,player.x));
+  player.y=Math.max(0,Math.min(canvas.height,player.y));
+
   if(player.hp<player.maxHp) player.hp+=0.02;
 
-  // spawn
   game.spawnTick++;
   if(game.spawnTick>game.spawnDelay){
     spawnZombie();
@@ -188,17 +184,24 @@ function update(){
   }
 
   // bullets
-  bullets.forEach(b=>{
-    b.x+=b.vx; b.y+=b.vy;
-  });
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    b.x+=b.vx;
+    b.y+=b.vy;
+
+    if(b.x<0||b.y<0||b.x>canvas.width||b.y>canvas.height){
+      bullets.splice(i,1);
+    }
+  }
 
   // zombies
-  zombies.forEach((z,i)=>{
+  for(let i=zombies.length-1;i>=0;i--){
+    const z=zombies[i];
+
     const angle=Math.atan2(player.y-z.y,player.x-z.x);
     z.x+=Math.cos(angle)*z.speed;
     z.y+=Math.sin(angle)*z.speed;
 
-    // boss attack
     if(z.boss){
       z.attack++;
       if(z.attack>180){
@@ -208,29 +211,24 @@ function update(){
       }
     }
 
-    // hit player
     if(dist(z,player)<15){
       player.hp-=0.1*(1-player.armor);
     }
 
-    // bullet collision
-    bullets.forEach((b,j)=>{
+    for(let j=bullets.length-1;j>=0;j--){
+      const b=bullets[j];
       if(dist(z,b)<10){
-        let dmg=b.dmg;
 
-        // crit
+        let dmg=b.dmg;
         if(Math.random()<0.2){
           dmg*=2;
-          spawnText(z.x,z.y,"CRIT");
         }
 
         z.hp-=dmg;
 
-        // knockback
         z.x+=b.vx*2;
         z.y+=b.vy*2;
 
-        // blood
         particles.push({x:z.x,y:z.y,life:20});
 
         bullets.splice(j,1);
@@ -240,22 +238,19 @@ function update(){
           player.streak++;
           player.multi=1+player.streak*0.05;
 
-          // drops
-          if(Math.random()<0.2){
-            drops.push({x:z.x,y:z.y,type:"hp"});
-          }
-          if(Math.random()<0.2){
-            drops.push({x:z.x,y:z.y,type:"ammo"});
-          }
+          if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"hp"});
+          if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"ammo"});
 
           zombies.splice(i,1);
+          break;
         }
       }
-    });
-  });
+    }
+  }
 
   // drops
-  drops.forEach((d,i)=>{
+  for(let i=drops.length-1;i>=0;i--){
+    const d=drops[i];
     if(dist(d,player)<15){
       if(d.type==="hp") player.hp+=20;
       if(d.type==="ammo"){
@@ -263,13 +258,10 @@ function update(){
       }
       drops.splice(i,1);
     }
-  });
+  }
 
-  // particles
-  particles.forEach(p=>p.life--);
-  particles=particles.filter(p=>p.life>0);
+  particles=particles.filter(p=>--p.life>0);
 
-  // shake decay
   game.shake*=0.9;
 }
 
@@ -277,16 +269,35 @@ function update(){
 function draw(){
   ctx.save();
 
-  // screen shake
   ctx.translate(
     (Math.random()-0.5)*game.shake,
     (Math.random()-0.5)*game.shake
   );
 
-  // day/night
-  const darkness = (Math.sin(game.time*0.002)+1)/2;
-  ctx.fillStyle=`rgba(0,0,0,${darkness*0.5})`;
+  // ===== MAP BACKGROUND =====
+  ctx.fillStyle="#0a0a0a";
   ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // grid
+  ctx.strokeStyle="rgba(255,255,255,0.05)";
+  for(let x=0;x<canvas.width;x+=40){
+    ctx.beginPath();
+    ctx.moveTo(x,0);
+    ctx.lineTo(x,canvas.height);
+    ctx.stroke();
+  }
+  for(let y=0;y<canvas.height;y+=40){
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(canvas.width,y);
+    ctx.stroke();
+  }
+
+  // noise dots
+  for(let i=0;i<200;i++){
+    ctx.fillStyle="rgba(255,255,255,0.03)";
+    ctx.fillRect(Math.random()*canvas.width,Math.random()*canvas.height,2,2);
+  }
 
   // player
   ctx.fillStyle="cyan";
@@ -297,7 +308,7 @@ function draw(){
   // zombies
   zombies.forEach(z=>{
     ctx.fillStyle=z.color;
-    ctx.fillRect(z.x-5,z.y-5,10,10);
+    ctx.fillRect(z.x-z.size/2,z.y-z.size/2,z.size,z.size);
   });
 
   // bullets
@@ -327,6 +338,16 @@ function draw(){
     ctx.fillRect(canvas.width-150+(z.x/canvas.width)*130,
                  20+(z.y/canvas.height)*130,2,2);
   });
+
+  // vignette
+  let g=ctx.createRadialGradient(
+    canvas.width/2,canvas.height/2,100,
+    canvas.width/2,canvas.height/2,canvas.width/1.2
+  );
+  g.addColorStop(0,"rgba(0,0,0,0)");
+  g.addColorStop(1,"rgba(0,0,0,0.6)");
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
   if(player.hp<=0){
     ctx.fillStyle="red";
