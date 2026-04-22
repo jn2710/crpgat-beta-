@@ -10,49 +10,88 @@
 <body>
 <canvas id="game"></canvas>
 <script>
-
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
 function resize(){
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 }
 resize();
 addEventListener("resize", resize);
 
 // ================= PLAYER =================
+
+
 const player = {
-  x:400, y:300,
-  hp:100, maxHp:100,
-  armor:0.1,
-  speed:3,
-  dash:0,
-  xp:0, level:1, nextLevel:100,
-  streak:0, multi:1
+x:400, y:300,
+hp:100, maxHp:100,
+armor:0.1,
+speed:3,
+dash:0,
+xp:0, level:1, nextLevel:100,
+streak:0, multi:1
 };
 
 // ================= GAME =================
 const game = {
-  round:1,
-  paused:false,
-  zombiesToSpawn:0,
-  spawnTick:0,
-  spawnDelay:40,
-  shake:0,
-  time:0,
-  state:"playing"
+round:1,
+paused:false,
+zombiesToSpawn:10,
+spawnTick:0,
+spawnDelay:40,
+shake:0,
+time:0
 };
 
 let zombies=[], bullets=[], grenades=[], particles=[], drops=[];
-
 let keys={}, mouse={x:0,y:0};
+
+// ================= UPGRADES =================
+const upgrades = [
+  {
+    name:"Damage Boost",
+    desc:"+25% bullet damage",
+    apply:()=> Object.values(weapons).forEach(w=>w.dmg*=1.25)
+  },
+  {
+    name:"Rapid Fire",
+    desc:"-20% fire delay",
+    apply:()=> Object.values(weapons).forEach(w=>w.fire*=0.8)
+  },
+  {
+    name:"Tank",
+    desc:"+30 max HP",
+    apply:()=>{
+      player.maxHp+=30;
+      player.hp+=30;
+    }
+  },
+  {
+    name:"Speed",
+    desc:"+1 movement speed",
+    apply:()=> player.speed+=1
+  },
+  {
+    name:"Armor",
+    desc:"+10% damage reduction",
+    apply:()=> player.armor+=0.1
+  },
+  {
+    name:"Shotgun Madness",
+    desc:"+2 pellets (all guns)",
+    apply:()=> Object.values(weapons).forEach(w=>w.pellets+=2)
+  }
+];
+
+let choosingUpgrade = false;
+let currentChoices = [];
 
 // ================= WEAPONS =================
 const weapons = {
-  pistol:{ammo:12,max:12,fire:200,dmg:20,spread:0,pellets:1},
-  shotgun:{ammo:6,max:6,fire:700,dmg:12,spread:0.5,pellets:6},
-  smg:{ammo:30,max:30,fire:80,dmg:8,spread:0.2,pellets:1}
+pistol:{ammo:12,max:12,fire:200,dmg:20,spread:0,pellets:1},
+shotgun:{ammo:6,max:6,fire:700,dmg:12,spread:0.5,pellets:6},
+smg:{ammo:30,max:30,fire:80,dmg:8,spread:0.2,pellets:1}
 };
 let currentWeapon="pistol";
 let lastShot=0;
@@ -62,6 +101,15 @@ let reloading=false;
 addEventListener("keydown",e=>{
   keys[e.key.toLowerCase()]=true;
 
+  // ===== UPGRADE PICK TAKES PRIORITY =====
+  if(choosingUpgrade){
+    if(e.key==="1") pickUpgrade(0);
+    if(e.key==="2") pickUpgrade(1);
+    if(e.key==="3") pickUpgrade(2);
+    return; //stopdoubleswitch 
+  }
+//Jackson is too retarded and put the same controls
+  // ===== NORMAL CONTROLS =====
   if(e.key==="1") currentWeapon="pistol";
   if(e.key==="2") currentWeapon="shotgun";
   if(e.key==="3") currentWeapon="smg";
@@ -69,304 +117,381 @@ addEventListener("keydown",e=>{
   if(e.key==="r") reload();
   if(e.key==="p") game.paused=!game.paused;
 });
-
 addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
 
 canvas.addEventListener("mousemove",e=>{
-  mouse.x=e.clientX; mouse.y=e.clientY;
+mouse.x=e.clientX; mouse.y=e.clientY;
 });
 
 canvas.addEventListener("mousedown",shoot);
 
 canvas.addEventListener("contextmenu",e=>{
-  e.preventDefault();
-  grenades.push({
-    x:player.x,y:player.y,
-    vx:(mouse.x-player.x)*0.05,
-    vy:(mouse.y-player.y)*0.05,
-    timer:60
-  });
+e.preventDefault();
+grenades.push({
+x:player.x,y:player.y,
+vx:(mouse.x-player.x)*0.05,
+vy:(mouse.y-player.y)*0.05,
+timer:60
+});
 });
 
 // ================= UTILS =================
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
-// ================= XP =================
+// ================= XP AND UPGRADES =================
 function gainXP(x){
   player.xp+=x;
   if(player.xp>=player.nextLevel){
     player.xp-=player.nextLevel;
     player.level++;
     player.nextLevel*=1.4;
+
     player.maxHp+=10;
-    player.hp+=10;
+    player.hp=Math.min(player.maxHp, player.hp+10);
+
+    choosingUpgrade = true;
+    game.paused = true;
+
+    currentChoices = [];
+    while(currentChoices.length < 3){
+      const pick = upgrades[Math.floor(Math.random()*upgrades.length)];
+      if(!currentChoices.includes(pick)){
+        currentChoices.push(pick);
+      }
+    }
   }
 }
 
 // ================= SHOOT =================
 function shoot(){
-  const w=weapons[currentWeapon];
-  const now=Date.now();
-  if(now-lastShot<w.fire || w.ammo<=0 || reloading) return;
+const w=weapons[currentWeapon];
+const now=Date.now();
+if(now-lastShot<w.fire || w.ammo<=0 || reloading) return;
 
-  lastShot=now;
-  w.ammo--;
+lastShot=now;
+w.ammo--;
 
-  const base=Math.atan2(mouse.y-player.y,mouse.x-player.x);
+const base=Math.atan2(mouse.y-player.y,mouse.x-player.x);
 
-  for(let i=0;i<w.pellets;i++){
-    const angle=base+(Math.random()-0.5)*w.spread;
-    bullets.push({
-      x:player.x,y:player.y,
-      vx:Math.cos(angle)*8,
-      vy:Math.sin(angle)*8,
-      dmg:w.dmg
-    });
-  }
+for(let i=0;i<w.pellets;i++){
+const angle=base+(Math.random()-0.5)*w.spread;
+bullets.push({
+x:player.x,y:player.y,
+vx:Math.cos(angle)*8,
+vy:Math.sin(angle)*8,
+dmg:w.dmg
+});
+}
 }
 
 // ================= RELOAD =================
 function reload(){
-  const w=weapons[currentWeapon];
-  if(reloading||w.ammo===w.max) return;
-  reloading=true;
-  setTimeout(()=>{
-    w.ammo=w.max;
-    reloading=false;
-  },600);
+const w=weapons[currentWeapon];
+if(reloading||w.ammo===w.max) return;
+reloading=true;
+setTimeout(()=>{
+w.ammo=w.max;
+reloading=false;
+},600);
+}
+function pickUpgrade(i){
+  const up = currentChoices[i];
+  if(!up) return;
+
+  up.apply();
+
+  choosingUpgrade = false;
+  game.paused = false;
 }
 
 // ================= SPAWN =================
 function spawnZombie(){
-  if(game.zombiesToSpawn<=0) return;
+if(game.zombiesToSpawn<=0) return;
 
-  let z={hp:60,speed:1.5,size:10,color:"lime"};
+let z={hp:60,speed:1.5,size:10,color:"lime"};
 
-  if(Math.random()<0.1){
-    z={hp:300,speed:0.7,size:20,color:"purple",boss:true,attack:0};
-  }
+if(Math.random()<0.1){
+z={hp:300,speed:0.7,size:20,color:"purple",boss:true,attack:0};
+}
 
-  const edge=Math.floor(Math.random()*4);
-  if(edge===0){z.x=-20;z.y=Math.random()*canvas.height;}
-  if(edge===1){z.x=canvas.width+20;z.y=Math.random()*canvas.height;}
-  if(edge===2){z.x=Math.random()*canvas.width;z.y=-20;}
-  if(edge===3){z.x=Math.random()*canvas.width;z.y=canvas.height+20;}
+const edge=Math.floor(Math.random()*4);
+if(edge===0){z.x=-20;z.y=Math.random()*canvas.height;}
+if(edge===1){z.x=canvas.width+20;z.y=Math.random()*canvas.height;}
+if(edge===2){z.x=Math.random()*canvas.width;z.y=-20;}
+if(edge===3){z.x=Math.random()*canvas.width;z.y=canvas.height+20;}
 
-  zombies.push(z);
-  game.zombiesToSpawn--;
+zombies.push(z);
+game.zombiesToSpawn--;
 }
 
 // ================= UPDATE =================
 function update(){
-  if(game.paused||player.hp<=0) return;
+if(game.paused||player.hp<=0) return;
 
-  game.time++;
+game.time++;
 
-  let sp=player.speed;
-  if(keys["shift"] && player.dash<=0) player.dash=20;
-  if(player.dash>0){ sp*=3; player.dash--; }
+let sp=player.speed;
+if(keys["shift"] && player.dash<=0) player.dash=20;
+if(player.dash>0){ sp*=3; player.dash--; }
 
-  if(keys["w"]) player.y-=sp;
-  if(keys["s"]) player.y+=sp;
-  if(keys["a"]) player.x-=sp;
-  if(keys["d"]) player.x+=sp;
+if(keys["w"]) player.y-=sp;
+if(keys["s"]) player.y+=sp;
+if(keys["a"]) player.x-=sp;
+if(keys["d"]) player.x+=sp;
 
-  // keep player in bounds
-  player.x=Math.max(0,Math.min(canvas.width,player.x));
-  player.y=Math.max(0,Math.min(canvas.height,player.y));
+player.x=Math.max(0,Math.min(canvas.width,player.x));
+player.y=Math.max(0,Math.min(canvas.height,player.y));
 
-  if(player.hp<player.maxHp) player.hp+=0.02;
+if(player.hp < player.maxHp){
+player.hp = Math.min(player.maxHp, player.hp + 0.02);
+}
 
-  game.spawnTick++;
-  if(game.spawnTick>game.spawnDelay){
-    spawnZombie();
-    game.spawnTick=0;
-  }
+// spawning
+game.spawnTick++;
+if(game.spawnTick>game.spawnDelay){
+spawnZombie();
+game.spawnTick=0;
+}
 
-  // bullets
-  for(let i=bullets.length-1;i>=0;i--){
-    const b=bullets[i];
-    b.x+=b.vx;
-    b.y+=b.vy;
+// next round
+if(zombies.length===0 && game.zombiesToSpawn===0){
+game.round++;
+game.zombiesToSpawn = 10 + game.round * 5;
+}
 
-    if(b.x<0||b.y<0||b.x>canvas.width||b.y>canvas.height){
-      bullets.splice(i,1);
-    }
-  }
+// bullets
+for(let i=bullets.length-1;i>=0;i--){
+const b=bullets[i];
+b.x+=b.vx;
+b.y+=b.vy;
 
-  // zombies
-  for(let i=zombies.length-1;i>=0;i--){
-    const z=zombies[i];
+```
+if(b.x<0||b.y<0||b.x>canvas.width||b.y>canvas.height){
+  bullets.splice(i,1);
+}
+```
 
-    const angle=Math.atan2(player.y-z.y,player.x-z.x);
-    z.x+=Math.cos(angle)*z.speed;
-    z.y+=Math.sin(angle)*z.speed;
+}
 
-    if(z.boss){
-      z.attack++;
-      if(z.attack>180){
-        game.shake=10;
-        player.hp-=10;
-        z.attack=0;
-      }
-    }
+// grenades
+for(let i=grenades.length-1;i>=0;i--){
+let g=grenades[i];
+g.x+=g.vx;
+g.y+=g.vy;
+g.timer--;
 
-    if(dist(z,player)<15){
-      player.hp-=0.1*(1-player.armor);
-    }
+```
+if(g.timer<=0){
+  for(let j=zombies.length-1;j>=0;j--){
+    const z=zombies[j];
+    if(dist(g,z)<80){
+      z.hp-=100;
 
-    for(let j=bullets.length-1;j>=0;j--){
-      const b=bullets[j];
-      if(dist(z,b)<10){
+      if(z.hp<=0){
+        gainXP(25);
+        player.streak++;
+        player.multi=1+player.streak*0.05;
 
-        let dmg=b.dmg;
-        if(Math.random()<0.2){
-          dmg*=2;
-        }
+        if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"hp"});
+        if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"ammo"});
 
-        z.hp-=dmg;
-
-        z.x+=b.vx*2;
-        z.y+=b.vy*2;
-
-        particles.push({x:z.x,y:z.y,life:20});
-
-        bullets.splice(j,1);
-
-        if(z.hp<=0){
-          gainXP(25);
-          player.streak++;
-          player.multi=1+player.streak*0.05;
-
-          if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"hp"});
-          if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"ammo"});
-
-          zombies.splice(i,1);
-          break;
-        }
+        zombies.splice(j,1);
       }
     }
   }
+  game.shake=15;
+  grenades.splice(i,1);
+}
+}
 
-  // drops
-  for(let i=drops.length-1;i>=0;i--){
-    const d=drops[i];
-    if(dist(d,player)<15){
-      if(d.type==="hp") player.hp+=20;
-      if(d.type==="ammo"){
-        Object.values(weapons).forEach(w=>w.ammo=w.max);
-      }
-      drops.splice(i,1);
+// zombies
+for(let i=zombies.length-1;i>=0;i--){
+const z=zombies[i];
+
+```
+const angle=Math.atan2(player.y-z.y,player.x-z.x);
+z.x+=Math.cos(angle)*z.speed;
+z.y+=Math.sin(angle)*z.speed;
+
+if(z.boss){
+  z.attack++;
+  if(z.attack>180){
+    game.shake=10;
+    player.hp-=10;
+    z.attack=0;
+  }
+}
+
+if(dist(z,player)<15){
+  player.hp-=0.1*(1-player.armor);
+  player.streak=0;
+  player.multi=1;
+}
+
+for(let j=bullets.length-1;j>=0;j--){
+  const b=bullets[j];
+  if(dist(z,b)<10){
+
+    let dmg=b.dmg;
+    if(Math.random()<0.2) dmg*=2;
+
+    z.hp-=dmg;
+    z.x+=b.vx*2;
+    z.y+=b.vy*2;
+
+    particles.push({x:z.x,y:z.y,life:20});
+    bullets.splice(j,1);
+
+    if(z.hp<=0){
+      gainXP(25);
+      player.streak++;
+      player.multi=1+player.streak*0.05;
+
+      if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"hp"});
+      if(Math.random()<0.2) drops.push({x:z.x,y:z.y,type:"ammo"});
+
+      zombies.splice(i,1);
+      break;
     }
   }
+}
+```
 
-  particles=particles.filter(p=>--p.life>0);
+}
 
-  game.shake*=0.9;
+// drops
+for(let i=drops.length-1;i>=0;i--){
+const d=drops[i];
+if(dist(d,player)<15){
+if(d.type==="hp"){
+player.hp = Math.min(player.maxHp, player.hp + 20);
+}
+if(d.type==="ammo"){
+Object.values(weapons).forEach(w=>w.ammo=w.max);
+}
+drops.splice(i,1);
+}
+}
+
+particles=particles.filter(p=>--p.life>0);
+game.shake*=0.9;
 }
 
 // ================= DRAW =================
 function draw(){
-  ctx.save();
+ctx.save();
 
-  ctx.translate(
-    (Math.random()-0.5)*game.shake,
-    (Math.random()-0.5)*game.shake
-  );
+ctx.translate(
+(Math.random()-0.5)*game.shake,
+(Math.random()-0.5)*game.shake
+);
 
-  // ===== MAP BACKGROUND =====
-  ctx.fillStyle="#0a0a0a";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+ctx.fillStyle="#0a0a0a";
+ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // grid
-  ctx.strokeStyle="rgba(255,255,255,0.05)";
-  for(let x=0;x<canvas.width;x+=40){
-    ctx.beginPath();
-    ctx.moveTo(x,0);
-    ctx.lineTo(x,canvas.height);
-    ctx.stroke();
-  }
-  for(let y=0;y<canvas.height;y+=40){
-    ctx.beginPath();
-    ctx.moveTo(0,y);
-    ctx.lineTo(canvas.width,y);
-    ctx.stroke();
-  }
-
-  // noise dots
-  for(let i=0;i<200;i++){
-    ctx.fillStyle="rgba(255,255,255,0.03)";
-    ctx.fillRect(Math.random()*canvas.width,Math.random()*canvas.height,2,2);
-  }
-
-  // player
-  ctx.fillStyle="cyan";
-  ctx.beginPath();
-  ctx.arc(player.x,player.y,10,0,Math.PI*2);
-  ctx.fill();
-
-  // zombies
-  zombies.forEach(z=>{
-    ctx.fillStyle=z.color;
-    ctx.fillRect(z.x-z.size/2,z.y-z.size/2,z.size,z.size);
-  });
-
-  // bullets
-  ctx.fillStyle="yellow";
-  bullets.forEach(b=>ctx.fillRect(b.x,b.y,3,3));
-
-  // particles
-  ctx.fillStyle="red";
-  particles.forEach(p=>ctx.fillRect(p.x,p.y,2,2));
-
-  // drops
-  drops.forEach(d=>{
-    ctx.fillStyle=d.type==="hp"?"green":"orange";
-    ctx.fillRect(d.x-5,d.y-5,10,10);
-  });
-
-  // UI
-  ctx.fillStyle="white";
-  ctx.fillText("HP:"+Math.floor(player.hp),20,20);
-  ctx.fillText("Weapon:"+currentWeapon,20,40);
-  ctx.fillText("Multiplier:"+player.multi.toFixed(1),20,60);
-
-  // minimap
-  ctx.fillStyle="rgba(255,255,255,0.2)";
-  ctx.fillRect(canvas.width-150,20,130,130);
-  zombies.forEach(z=>{
-    ctx.fillRect(canvas.width-150+(z.x/canvas.width)*130,
-                 20+(z.y/canvas.height)*130,2,2);
-  });
-
-  // vignette
-  let g=ctx.createRadialGradient(
-    canvas.width/2,canvas.height/2,100,
-    canvas.width/2,canvas.height/2,canvas.width/1.2
-  );
-  g.addColorStop(0,"rgba(0,0,0,0)");
-  g.addColorStop(1,"rgba(0,0,0,0.6)");
-  ctx.fillStyle=g;
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  if(player.hp<=0){
-    ctx.fillStyle="red";
-    ctx.font="40px sans-serif";
-    ctx.fillText("YOU DIED - refresh to restart",canvas.width/2-200,canvas.height/2);
-  }
-
-  ctx.restore();
+ctx.strokeStyle="rgba(255,255,255,0.05)";
+for(let x=0;x<canvas.width;x+=40){
+ctx.beginPath();
+ctx.moveTo(x,0);
+ctx.lineTo(x,canvas.height);
+ctx.stroke();
+}
+for(let y=0;y<canvas.height;y+=40){
+ctx.beginPath();
+ctx.moveTo(0,y);
+ctx.lineTo(canvas.width,y);
+ctx.stroke();
 }
 
+for(let i=0;i<200;i++){
+ctx.fillStyle="rgba(255,255,255,0.03)";
+ctx.fillRect(Math.random()*canvas.width,Math.random()*canvas.height,2,2);
+}
+
+ctx.fillStyle="cyan";
+ctx.beginPath();
+ctx.arc(player.x,player.y,10,0,Math.PI*2);
+ctx.fill();
+
+zombies.forEach(z=>{
+ctx.fillStyle=z.color;
+ctx.fillRect(z.x-z.size/2,z.y-z.size/2,z.size,z.size);
+});
+
+ctx.fillStyle="yellow";
+bullets.forEach(b=>ctx.fillRect(b.x,b.y,3,3));
+
+ctx.fillStyle="red";
+particles.forEach(p=>ctx.fillRect(p.x,p.y,2,2));
+
+drops.forEach(d=>{
+ctx.fillStyle=d.type==="hp"?"green":"orange";
+ctx.fillRect(d.x-5,d.y-5,10,10);
+});
+
+ctx.fillStyle="white";
+ctx.fillText("HP:"+Math.floor(player.hp),20,20);
+ctx.fillText("Weapon:"+currentWeapon,20,40);
+ctx.fillText("Multiplier:"+player.multi.toFixed(1),20,60);
+ctx.fillText("Round:"+game.round,20,80);
+
+ctx.fillStyle="rgba(255,255,255,0.2)";
+ctx.fillRect(canvas.width-150,20,130,130);
+zombies.forEach(z=>{
+ctx.fillRect(canvas.width-150+(z.x/canvas.width)*130,
+20+(z.y/canvas.height)*130,2,2);
+});
+
+let g=ctx.createRadialGradient(
+canvas.width/2,canvas.height/2,100,
+canvas.width/2,canvas.height/2,canvas.width/1.2
+);
+g.addColorStop(0,"rgba(0,0,0,0)");
+g.addColorStop(1,"rgba(0,0,0,0.6)");
+ctx.fillStyle=g;
+ctx.fillRect(0,0,canvas.width,canvas.height);
+
+if(player.hp<=0){
+ctx.fillStyle="red";
+ctx.font="40px sans-serif";
+ctx.fillText("YOU DIED - refresh to restart",canvas.width/2-200,canvas.height/2);
+}
+
+ctx.restore();
+
+// aim line
+ctx.strokeStyle="rgba(255,255,0,0.3)";
+ctx.beginPath();
+ctx.moveTo(player.x,player.y);
+ctx.lineTo(mouse.x,mouse.y);
+ctx.stroke();
+}
+//upgrage ctx
+if(choosingUpgrade){
+  ctx.fillStyle="rgba(0,0,0,0.8)";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle="white";
+  ctx.font="30px sans-serif";
+  ctx.fillText("CHOOSE UPGRADE", canvas.width/2-140, 120);
+
+  ctx.font="20px sans-serif";
+
+  currentChoices.forEach((u,i)=>{
+    ctx.fillText(
+      (i+1)+": "+u.name+" - "+u.desc,
+      canvas.width/2-200,
+      200 + i*40
+    );
+  });
+}
 // ================= LOOP =================
 function loop(){
-  update();
-  draw();
-  requestAnimationFrame(loop);
+update();
+draw();
+requestAnimationFrame(loop);
 }
 
-// start
-game.zombiesToSpawn=10;
 loop();
 
 </script>
